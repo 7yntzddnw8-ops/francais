@@ -47,6 +47,9 @@ button{font-family:inherit;color:inherit;border:0;background:none;cursor:pointer
 .lab{font-size:12px;font-weight:600;color:var(--label2);text-transform:uppercase;letter-spacing:.06em;margin:20px 2px 8px}
 .weeks{display:flex;gap:8px;overflow-x:auto;padding:2px 0 4px;scrollbar-width:none}
 .weeks::-webkit-scrollbar{display:none}
+.levels{display:flex;gap:8px;margin-bottom:2px}
+.lvp{flex:1;text-align:center;padding:9px 0;border-radius:11px;background:#fff;border:1px solid var(--sep);font-size:13px;font-weight:600}
+.lvp.sel{border-color:transparent;color:#fff}
 .wk{flex:0 0 auto;width:56px;height:60px;border-radius:14px;background:#fff;border:1px solid var(--sep);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px}
 .wk .n{font-size:17px;font-weight:600;font-variant-numeric:tabular-nums}
 .wk .d{font-size:9.5px;color:var(--label2);font-variant-numeric:tabular-nums}
@@ -136,7 +139,9 @@ button{font-family:inherit;color:inherit;border:0;background:none;cursor:pointer
 <div class="wrap pad">
   <!-- LEARN -->
   <div id="view-learn">
-    <div class="prog-h"><span>Course progress</span><b id="progtxt">0%</b></div>
+    <div class="lab" id="levlab" style="display:none">Level</div>
+    <div class="levels" id="levels" style="display:none"></div>
+    <div class="prog-h"><span id="proglabel">Course progress</span><b id="progtxt">0%</b></div>
     <div class="ios-pbar"><div class="ios-pmask" id="pmask" style="width:100%"></div></div>
     <div class="lab">Week</div>
     <div class="weeks" id="weeks"></div>
@@ -175,6 +180,8 @@ button{font-family:inherit;color:inherit;border:0;background:none;cursor:pointer
 </div>
 
 <script src="curriculum.js"></script>
+<script src="curriculum-level2.js"></script>
+<script src="curriculum-level3.js"></script>
 <script>
 const SPK='<svg viewBox="0 0 24 24"><path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3a4.5 4.5 0 0 0-2.5-4v8a4.5 4.5 0 0 0 2.5-4zM14 3.2v2.1a7 7 0 0 1 0 13.4v2.1A9 9 0 0 0 14 3.2z"/></svg>';
 const CAT={NUM:['--cat-a','--cat-a-t'],NOUN:['--cat-b','--cat-b-t'],VERB:['--cat-c','--cat-c-t'],PHRASE:['--cat-d','--cat-d-t'],WORD:['--cat-e','--cat-e-t']};
@@ -186,6 +193,12 @@ function save(){try{localStorage.setItem(KEY,JSON.stringify(S));}catch(e){}}
 load();
 
 const C=window.CURRICULUM;
+if(window.CURRICULUM_L2) C.blocks=C.blocks.concat(window.CURRICULUM_L2.blocks);
+if(window.CURRICULUM_L3) C.blocks=C.blocks.concat(window.CURRICULUM_L3.blocks);
+const LEVEL_TITLES={1:'Core',2:'Expanding',3:'Refining'};
+const LEVEL_COLORS={1:'--p1',2:'--p2',3:'--p3'};
+const lvlOf=(wn)=>Math.floor((wn-1)/16)+1;
+function availLevels(){const s=new Set();C.blocks.forEach(b=>b.weeks.forEach(w=>s.add(lvlOf(w.n))));return [...s].sort((a,b)=>a-b);}
 const todayStr=()=>new Date().toISOString().slice(0,10);
 const dayKey=(w,d)=>w+'-'+d;
 function eachDay(fn){C.blocks.forEach(b=>b.weeks.forEach(w=>w.days.forEach(d=>fn(b,w,d))));}
@@ -195,6 +208,7 @@ function blockItems(wn){let out=[];C.blocks.forEach(b=>{if(b.weeks.some(w=>w.n==
 function allItems(){return learnItems();}
 
 let cur={w:1,d:1};
+let curLevel=1;
 let mode='learn';
 
 /* audio */
@@ -205,7 +219,7 @@ function speak(t){if(!('speechSynthesis' in window))return;try{speechSynthesis.c
 
 function splitEn(en){const m=en.match(/^(.*?)\s*\*\(?(.+?)\)?\*\s*$/);if(m)return[m[1].trim(),m[2].trim()];return[en,''];}
 
-function statsCalc(){let days=0,total=0;eachDay((b,w,d)=>{total++;if(S.done[dayKey(w.n,d.n)])days++;});return{days,total,learned:Object.keys(S.srs).length,allItems:C.meta.totalItems};}
+function statsCalc(){let days=0,total=0,items=0;eachDay((b,w,d)=>{total++;if(S.done[dayKey(w.n,d.n)])days++;items+=d.items.length;});return{days,total,learned:Object.keys(S.srs).length,allItems:items};}
 function boxOf(id){return S.srs[id]?S.srs[id].box:0;}
 function blockColorOf(wn){let c='--p1';C.blocks.forEach(b=>{if(b.weeks.some(w=>w.n==wn))c=b.color;});return c;}
 function weekDoneFrac(wn){let done=0,tot=0;C.blocks.forEach(b=>b.weeks.forEach(w=>{if(w.n==wn)w.days.forEach(d=>{tot++;if(S.done[dayKey(w.n,d.n)])done++;});}));return done+'/'+tot;}
@@ -215,16 +229,31 @@ function curDayObj(){const w=curWeekObj();return w.days.find(d=>d.n==cur.d);}
 function renderWeeks(){
   const el=document.getElementById('weeks');el.innerHTML='';
   C.blocks.forEach(b=>b.weeks.forEach(w=>{
-    const c=b.color, sel=(w.n==cur.w);
+    if(lvlOf(w.n)!==curLevel)return;
+    const c=b.color, sel=(w.n==cur.w), disp=((w.n-1)%16)+1;
     const div=document.createElement('div');
     div.className='wk'+(sel?' sel':'');
     if(sel)div.style.background='var('+c+')';
-    div.innerHTML='<span class="n">'+w.n+'</span><span class="d">'+weekDoneFrac(w.n)+'</span><span class="dot" style="background:'+(sel?'#fff':'var('+c+')')+'"></span>';
+    div.innerHTML='<span class="n">'+disp+'</span><span class="d">'+weekDoneFrac(w.n)+'</span><span class="dot" style="background:'+(sel?'#fff':'var('+c+')')+'"></span>';
     div.onclick=()=>{cur={w:w.n,d:1};renderLearn();};
     el.appendChild(div);
   }));
   const sel=el.querySelector('.sel');if(sel)sel.scrollIntoView({inline:'center',block:'nearest'});
 }
+function renderLevels(){
+  const lv=availLevels(), lab=document.getElementById('levlab'), box=document.getElementById('levels');
+  if(lv.length<2){lab.style.display='none';box.style.display='none';return;}
+  lab.style.display='';box.style.display='flex';box.innerHTML='';
+  lv.forEach(n=>{
+    const sel=(n===curLevel), bt=document.createElement('button');
+    bt.className='lvp'+(sel?' sel':'');
+    if(sel)bt.style.background='var('+LEVEL_COLORS[n]+')';
+    bt.textContent='Level '+n;
+    bt.onclick=()=>{curLevel=n;const fw=C.blocks.flatMap(b=>b.weeks).find(w=>lvlOf(w.n)===n);cur={w:fw.n,d:1};renderLearn();};
+    box.appendChild(bt);
+  });
+}
+function levelStats(L){let days=0,total=0,items=0,learned=0;C.blocks.forEach(b=>b.weeks.forEach(w=>{if(lvlOf(w.n)!==L)return;w.days.forEach(d=>{total++;if(S.done[dayKey(w.n,d.n)])days++;d.items.forEach(it=>{items++;if(S.srs[it.id])learned++;});});}));return{days,total,items,learned};}
 function dayTabLabel(d){return ({focus:'focus',summary:'recap',checkpoint:'check',final:'final'})[d.type] || (d.focus?'focus':'');}
 function renderDays(){
   const el=document.getElementById('days');el.innerHTML='';
@@ -281,14 +310,17 @@ function renderLesson(){
   wrap.querySelectorAll('.spk').forEach(b=>b.onclick=()=>speak(b.getAttribute('data-say')));
 }
 function renderProgress(){
-  const st=statsCalc(), pct=Math.round(st.learned/st.allItems*100);
+  const multi=availLevels().length>1;
+  const ls=levelStats(curLevel), pct=ls.items?Math.round(ls.learned/ls.items*100):0;
   document.getElementById('pmask').style.width=(100-pct)+'%';
-  document.getElementById('progtxt').textContent=pct+'% \u00b7 '+st.learned+'/'+st.allItems+' words';
+  document.getElementById('progtxt').textContent=pct+'% \u00b7 '+ls.learned+'/'+ls.items+' words';
+  document.getElementById('proglabel').textContent=multi?('Level '+curLevel+' \u00b7 '+LEVEL_TITLES[curLevel]):'Course progress';
+  const st=statsCalc();
   document.getElementById('stat-days').textContent=st.days+' / '+st.total+' lessons';
   document.getElementById('stat-items').textContent=st.learned+' / '+st.allItems+' words';
   document.getElementById('kicker').textContent=(S.streak>1)?(S.streak+'-day streak \u00b7 keep going'):'Conversational core';
 }
-function renderLearn(){renderWeeks();renderDays();renderLesson();renderProgress();}
+function renderLearn(){renderLevels();renderWeeks();renderDays();renderLesson();renderProgress();}
 
 function dueItems(){const t=todayStr();const map={};learnItems().forEach(it=>map[it.id]=it);const out=[];Object.keys(S.srs).forEach(id=>{if(S.srs[id].due<=t&&map[id])out.push(map[id]);});return out.sort((a,b)=>boxOf(a.id)-boxOf(b.id));}
 function renderReview(){
@@ -342,7 +374,7 @@ function exportData(){const blob=new Blob([JSON.stringify(S,null,2)],{type:'appl
 function importData(ev){const f=ev.target.files[0];if(!f)return;const r=new FileReader();r.onload=()=>{try{S=Object.assign(S,JSON.parse(r.result));save();autoContext();renderLearn();alert('Progress imported.');}catch(e){alert('Could not read that file.');}};r.readAsText(f);}
 function resetData(){if(confirm('Erase all progress on this device? This cannot be undone.')){S={done:{},srs:{},auto:S.auto,streak:0,lastDay:null};save();autoContext();renderLearn();}}
 
-function autoContext(){let found=null;C.blocks.forEach(b=>b.weeks.forEach(w=>w.days.forEach(d=>{if(!found&&!S.done[dayKey(w.n,d.n)])found={w:w.n,d:d.n};})));cur=found||{w:16,d:7};}
+function autoContext(){let found=null;C.blocks.forEach(b=>b.weeks.forEach(w=>w.days.forEach(d=>{if(!found&&!S.done[dayKey(w.n,d.n)])found={w:w.n,d:d.n};})));if(!found){const ws=C.blocks.flatMap(b=>b.weeks);const last=ws[ws.length-1];found={w:last.n,d:7};}cur=found;curLevel=lvlOf(cur.w);}
 
 document.getElementById('autoaud').checked=S.auto!==false;
 autoContext();
